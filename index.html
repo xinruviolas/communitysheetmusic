@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="en">
+<!--
+  COMMUNITY SHEET MUSIC — xinruli.com/communitysheetmusic
+
+  FILES in same folder as index.html:
+    staff.PNG  quarter.PNG  half.PNG  eighth.PNG
+    dot.PNG  flat.PNG  sharp.PNG
+    submit.PNG  trash.PNG  make_more.png
+
+  SUPABASE SQL (run once in SQL Editor):
+
+  create table public.staffs (
+    id              uuid primary key default gen_random_uuid(),
+    created_at      timestamptz default now(),
+    sequence_number serial,
+    is_complete     boolean default false
+  );
+  create table public.elements (
+    id         uuid primary key default gen_random_uuid(),
+    staff_id   uuid references public.staffs(id) on delete cascade,
+    type       text not null,
+    x_pct      float not null,
+    y_pct      float not null,
+    created_at timestamptz default now()
+  );
+  alter table public.staffs   enable row level security;
+  alter table public.elements enable row level security;
+  create policy "staffs_select"   on public.staffs   for select using (true);
+  create policy "staffs_insert"   on public.staffs   for insert with check (true);
+  create policy "staffs_update"   on public.staffs   for update using (true);
+  create policy "elements_select" on public.elements for select using (true);
+  create policy "elements_insert" on public.elements for insert with check (true);
+  create policy "elements_update" on public.elements for update using (true);
+  create policy "elements_delete" on public.elements for delete using (true);
+-->
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Community Sheet Music</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Patrick+Hand&display=swap" rel="stylesheet">
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --ink:    #1c1a14;
+      --ink-md: #5a5446;
+      --ink-lt: #9a9282;
+      --green:  #3d7a42;
+      --w:      390px;   /* fixed mobile width */
+    }
+
+    /* ── Page shell ───────────────────────────────────────── */
+    html, body {
+      min-height: 100%;
+      background: white;
+    }
+
+    body {
+      font-family: 'Patrick Hand', sans-serif;
+      color: var(--ink);
+      /* centre a mobile column on desktop */
+      display: flex;
+      justify-content: center;
+    }
+
+    /* ── App container — always 390px wide ───────────────── */
+    #app {
+      width: var(--w);
+      min-height: 100vh;
+      background: white;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Loading ──────────────────────────────────────────── */
+    #loading {
+      position: fixed; inset: 0;
+      background: white;
+      display: flex; align-items: center; justify-content: center;
+      z-index: 200;
+      font-size: 18px; color: var(--ink-lt); letter-spacing: 0.04em;
+    }
+
+    /* ── Screens ──────────────────────────────────────────── */
+    .screen {
+      display: none; flex-direction: column;
+      flex: 1; padding: 28px 20px 48px; gap: 16px;
+    }
+    .screen.active { display: flex; }
+
+    /* ── Header ───────────────────────────────────────────── */
+    .page-header {
+      display: flex; align-items: baseline; justify-content: space-between;
+      border-bottom: 1.5px solid var(--ink); padding-bottom: 8px;
+    }
+    .page-title  { font-size: 20px; }
+    .page-meta   { font-size: 16px; color: var(--ink-md); }
+
+    /* ── Welcome image ────────────────────────────────────── */
+    #welcome-img {
+      width: 100%; display: block;
+      pointer-events: none; user-select: none;
+    }
+
+    /* ── Staff canvas ─────────────────────────────────────── */
+    #staff-wrapper {
+      position: relative;
+      width: 100%;
+    }
+    #staff-img {
+      width: 100%; display: block;
+      pointer-events: none; user-select: none;
+    }
+
+    /* Placed elements — size fixed in px so they don't scale with viewport */
+    .placed-el {
+      position: absolute;
+      height: 80px; width: auto;
+      transform: translate(-50%, -50%);
+      cursor: grab; user-select: none; touch-action: none;
+      transition: opacity 0.12s;
+    }
+    .placed-el:hover    { opacity: 0.55; }
+    .placed-el.ghost-source { opacity: 0.15; }
+
+    /* ── Drag ghost ───────────────────────────────────────── */
+    #drag-ghost {
+      position: fixed; pointer-events: none; z-index: 9999;
+      height: 80px; width: auto;
+      transform: translate(-50%, -50%) scale(1.08);
+      display: none; opacity: 0.7;
+    }
+
+    /* ── Palette — wrapping grid of 6 ────────────────────── */
+    #palette {
+      display: flex;
+      flex-wrap: nowrap;
+      justify-content: space-between;
+      padding: 8px 0;
+    }
+
+    .pal-item {
+      cursor: grab; touch-action: none; user-select: none;
+      flex: 1;
+      display: flex; align-items: center; justify-content: center;
+      padding: 6px 2px;
+      transition: transform 0.12s, opacity 0.12s;
+    }
+    .pal-item:hover { transform: scale(1.1); opacity: 0.7; }
+    .pal-item img   { height: 80px; width: auto; pointer-events: none; display: block; }
+
+    /* ── Trash + Submit row ───────────────────────────────── */
+    #bottom-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 4px 0;
+    }
+
+    #trash-zone {
+      display: flex; align-items: center; justify-content: center;
+      flex: 1;
+      transition: opacity 0.15s;
+    }
+    #trash-zone img {
+      height: 80px; width: auto; pointer-events: none;
+      transition: transform 0.15s, opacity 0.15s;
+    }
+    #trash-zone.over img { transform: scale(1.18); opacity: 0.55; }
+
+    #submit-btn {
+      flex: 1;
+      background: none; border: none; cursor: pointer; padding: 0;
+      display: flex; justify-content: center; align-items: center;
+      transition: opacity 0.12s, transform 0.1s;
+    }
+    #submit-btn:hover  { opacity: 0.8; }
+    #submit-btn:active { transform: scale(0.95); }
+    #submit-btn img    { height: 100px; width: auto; }
+
+    /* ── Browse link ──────────────────────────────────────── */
+    #browse-btn {
+      background: none; border: none; cursor: pointer;
+      font-family: 'Patrick Hand', sans-serif;
+      font-size: 16px; color: var(--ink-lt); padding: 4px 0;
+      border-bottom: 1px solid transparent;
+      text-align: left;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    #browse-btn:hover { color: var(--ink-md); border-color: var(--ink-lt); }
+
+    /* Status */
+    #status {
+      font-size: 17px; color: var(--green); min-height: 22px;
+    }
+
+    /* Hint */
+    #hint {
+      font-size: 13px; color: var(--ink-lt); line-height: 1.5;
+    }
+
+    /* ── Gallery ──────────────────────────────────────────── */
+    #gallery-top {
+      display: flex; align-items: center; justify-content: space-between;
+      border-bottom: 1.5px solid var(--ink); padding-bottom: 8px;
+    }
+
+    #make-more-btn {
+      background: none; border: none; cursor: pointer; padding: 0;
+      transition: opacity 0.12s, transform 0.1s;
+    }
+    #make-more-btn:hover  { opacity: 0.8; }
+    #make-more-btn:active { transform: scale(0.95); }
+    #make-more-btn img    { height: 80px; width: auto; }
+
+    #gallery-grid {
+      display: flex; flex-direction: column; gap: 24px;
+    }
+
+    .g-card { background: white; }
+    .g-card-staff { position: relative; width: 100%; }
+    .g-staff-bg   { width: 100%; display: block; }
+    .g-note {
+      position: absolute; height: 44px; width: auto;
+      transform: translate(-50%, -50%); pointer-events: none;
+    }
+    .g-card-meta {
+      padding: 5px 0;
+      font-size: 13px; color: var(--ink-lt);
+    }
+
+    #gallery-empty {
+      font-size: 18px; color: var(--ink-lt);
+      padding: 60px 0; text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+<div id="loading">loading…</div>
+<img id="drag-ghost" src="" alt="">
+
+<div id="app">
+
+  <!-- ═══════════════════════════ COMPOSE -->
+  <div id="compose-screen" class="screen">
+
+    <div class="page-header">
+      <span class="page-title">Community Sheet Music</span>
+      <span class="page-meta" id="visitor-label">visitor —</span>
+    </div>
+
+    <img id="welcome-img" src="welcome.png" alt="Welcome" draggable="false">
+
+    <div id="staff-wrapper">
+      <img id="staff-img" src="staff.PNG" alt="Music staff" draggable="false">
+    </div>
+
+    <div id="palette">
+      <div class="pal-item" data-type="quarter"><img src="quarter.PNG" alt="Quarter note" draggable="false"></div>
+      <div class="pal-item" data-type="half"><img src="half.PNG" alt="Half note" draggable="false"></div>
+      <div class="pal-item" data-type="eighth"><img src="eighth.PNG" alt="Eighth note" draggable="false"></div>
+      <div class="pal-item" data-type="dot"><img src="dot.PNG" alt="Dot" draggable="false"></div>
+      <div class="pal-item" data-type="flat"><img src="flat.PNG" alt="Flat" draggable="false"></div>
+      <div class="pal-item" data-type="sharp"><img src="sharp.PNG" alt="Sharp" draggable="false"></div>
+    </div>
+
+    <div id="bottom-row">
+      <div id="trash-zone">
+        <img src="trash.PNG" alt="Drag here to delete">
+      </div>
+      <button id="submit-btn">
+        <img src="submit.PNG" alt="Submit">
+      </button>
+    </div>
+
+    <button id="browse-btn" onclick="openGallery()">browse past staffs (<span id="complete-count">…</span>)</button>
+
+    <div id="status"></div>
+    <p id="hint">Drag notes onto the staff · drag to reposition · drop on trash to delete</p>
+
+  </div>
+
+  <!-- ═══════════════════════════ GALLERY -->
+  <div id="gallery-screen" class="screen">
+
+    <div id="gallery-top">
+      <button id="make-more-btn" onclick="closeGallery()">
+        <img src="make_more.PNG" alt="Make more music">
+      </button>
+      <span class="page-title">Past Staffs</span>
+    </div>
+
+    <div id="gallery-grid">
+      <div id="gallery-empty" style="display:none">No submissions yet — be the first!</div>
+    </div>
+
+  </div>
+
+</div><!-- #app -->
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script>
+'use strict';
+
+const SB_URL = 'https://msobwkepsdbfshjrstsn.supabase.co';
+const SB_KEY = 'sb_publishable_vsUNh3btsZIC8NAd6gtdsA_sc7oRXCi';
+const { createClient } = window.supabase;
+const sb = createClient(SB_URL, SB_KEY);
+
+let currentStaffId = null;
+let currentSeqNum  = null;
+let placedItems    = [];
+let drag           = null;
+
+// ── Boot ──────────────────────────────────────────────────────────
+async function init() {
+  await loadOrCreateStaff();
+  await fetchCounts();
+  document.getElementById('loading').style.display = 'none';
+  showScreen('compose-screen');
+  setupListeners();
+}
+
+// ── Counts ─────────────────────────────────────────────────────────
+async function fetchCounts() {
+  document.getElementById('visitor-label').textContent =
+    'visitor ' + (currentSeqNum ?? '—');
+
+  const { count } = await sb
+    .from('staffs')
+    .select('id', { count: 'exact', head: true })
+    .eq('is_complete', true);
+  document.getElementById('complete-count').textContent = count ?? '0';
+}
+
+// ── Staff ─────────────────────────────────────────────────────────
+async function loadOrCreateStaff() {
+  const { data } = await sb
+    .from('staffs').select('*')
+    .eq('is_complete', false)
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  if (data && data.length > 0) {
+    currentStaffId = data[0].id;
+    currentSeqNum  = data[0].sequence_number;
+    await loadElements();
+  } else {
+    await createStaff();
+  }
+}
+
+async function createStaff() {
+  const { data } = await sb
+    .from('staffs').insert({ is_complete: false }).select().single();
+  if (data) { currentStaffId = data.id; currentSeqNum = data.sequence_number; }
+  placedItems = [];
+}
+
+async function loadElements() {
+  clearCanvasDOM();
+  const { data } = await sb.from('elements').select('*').eq('staff_id', currentStaffId);
+  if (data) data.forEach(r => spawnEl(r.type, r.x_pct, r.y_pct, r.id));
+}
+
+// ── Elements ──────────────────────────────────────────────────────
+/*
+  Positions are stored as fractions (0–1) of the staff wrapper's
+  rendered size at the moment of placement. On redraw we restore
+  them the same way, so layout is stable regardless of viewport.
+*/
+function spawnEl(type, xPct, yPct, dbId) {
+  const wrapper = document.getElementById('staff-wrapper');
+  const img     = document.createElement('img');
+  img.src       = type + '.PNG';
+  img.className = 'placed-el';
+  img.draggable = false;
+  img.style.left = (xPct * 100) + '%';
+  img.style.top  = (yPct * 100) + '%';
+
+  const item = { id: dbId, type, xPct, yPct, el: img };
+  placedItems.push(item);
+  wrapper.appendChild(img);
+
+  img.addEventListener('mousedown',  e => beginDragPlaced(e, item));
+  img.addEventListener('touchstart', e => beginDragPlaced(e, item), { passive: false });
+  return item;
+}
+
+async function persistEl(type, xPct, yPct) {
+  const { data } = await sb
+    .from('elements')
+    .insert({ staff_id: currentStaffId, type, x_pct: xPct, y_pct: yPct })
+    .select().single();
+  return data ? data.id : null;
+}
+
+async function moveEl(item, xPct, yPct) {
+  item.xPct = xPct; item.yPct = yPct;
+  item.el.style.left = (xPct * 100) + '%';
+  item.el.style.top  = (yPct * 100) + '%';
+  if (item.id) {
+    await sb.from('elements').update({ x_pct: xPct, y_pct: yPct }).eq('id', item.id);
+  }
+}
+
+async function deleteEl(item) {
+  if (item.id) await sb.from('elements').delete().eq('id', item.id);
+  item.el.remove();
+  placedItems = placedItems.filter(p => p !== item);
+}
+
+function clearCanvasDOM() {
+  document.querySelectorAll('.placed-el').forEach(el => el.remove());
+  placedItems = [];
+}
+
+// ── Submit ─────────────────────────────────────────────────────────
+async function handleSubmit() {
+  if (!currentStaffId) {
+    setStatus('not connected — check browser console');
+    return;
+  }
+  if (placedItems.length === 0 && !confirm('Your staff is empty — submit anyway?')) return;
+
+  setStatus('saving…');
+  try {
+    const { error } = await sb
+      .from('staffs')
+      .update({ is_complete: true })
+      .eq('id', currentStaffId);
+    if (error) throw error;
+
+    clearCanvasDOM();
+    await createStaff();
+    await fetchCounts();
+    setStatus('submitted ♩  a new staff awaits.');
+    setTimeout(() => setStatus(''), 3500);
+  } catch (err) {
+    console.error('Submit failed:', err);
+    setStatus('error saving — check browser console');
+  }
+}
+
+// ── Gallery ────────────────────────────────────────────────────────
+async function openGallery() {
+  showScreen('gallery-screen');
+  await renderGallery();
+}
+function closeGallery() { showScreen('compose-screen'); }
+
+async function renderGallery() {
+  const grid = document.getElementById('gallery-grid');
+  Array.from(grid.children).forEach(c => { if (c.id !== 'gallery-empty') c.remove(); });
+  document.getElementById('gallery-empty').style.display = 'none';
+
+  const { data: staffs } = await sb
+    .from('staffs').select('*').eq('is_complete', true)
+    .order('sequence_number', { ascending: false }).limit(30);
+
+  if (!staffs || staffs.length === 0) {
+    document.getElementById('gallery-empty').style.display = 'block'; return;
+  }
+
+  const ids = staffs.map(s => s.id);
+  const { data: els } = await sb.from('elements').select('*').in('staff_id', ids);
+  const byStaff = {};
+  (els || []).forEach(el => { (byStaff[el.staff_id] = byStaff[el.staff_id] || []).push(el); });
+  staffs.forEach(s => grid.appendChild(buildCard(s, byStaff[s.id] || [])));
+}
+
+function buildCard(staff, elements) {
+  const card = document.createElement('div');
+  card.className = 'g-card';
+
+  const area = document.createElement('div');
+  area.className = 'g-card-staff';
+
+  const bg = document.createElement('img');
+  bg.src = 'staff.PNG'; bg.className = 'g-staff-bg'; bg.alt = '';
+  area.appendChild(bg);
+
+  elements.forEach(el => {
+    const note = document.createElement('img');
+    note.src = el.type + '.PNG'; note.className = 'g-note';
+    note.style.left = (el.x_pct * 100) + '%';
+    note.style.top  = (el.y_pct * 100) + '%';
+    area.appendChild(note);
+  });
+
+  const meta = document.createElement('div');
+  meta.className = 'g-card-meta';
+  const d = new Date(staff.created_at);
+  const n = elements.length;
+  meta.textContent =
+    `Visitor #${staff.sequence_number}  ·  ` +
+    d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) +
+    `  ·  ${n} ${n === 1 ? 'note' : 'notes'}`;
+
+  card.appendChild(area);
+  card.appendChild(meta);
+  return card;
+}
+
+// ── Drag & Drop ────────────────────────────────────────────────────
+function setupListeners() {
+  document.getElementById('submit-btn').addEventListener('click', handleSubmit);
+
+  document.querySelectorAll('.pal-item').forEach(el => {
+    el.addEventListener('mousedown',  e => beginDragPalette(e, el.dataset.type));
+    el.addEventListener('touchstart', e => beginDragPalette(e, el.dataset.type), { passive: false });
+  });
+
+  document.addEventListener('mousemove',   onMove);
+  document.addEventListener('mouseup',     onEnd);
+  document.addEventListener('touchmove',   onMove,     { passive: false });
+  document.addEventListener('touchend',    onEnd);
+  document.addEventListener('touchcancel', cancelDrag);
+}
+
+function pt(e) {
+  if (e.touches?.length)        return { x: e.touches[0].clientX,        y: e.touches[0].clientY };
+  if (e.changedTouches?.length) return { x: e.changedTouches[0].clientX, y: e.changedTouches[0].clientY };
+  return { x: e.clientX, y: e.clientY };
+}
+
+function showGhost(type, x, y) {
+  const g = document.getElementById('drag-ghost');
+  g.src = type + '.PNG';
+  g.style.left = x + 'px'; g.style.top = y + 'px'; g.style.display = 'block';
+}
+function hideGhost() { document.getElementById('drag-ghost').style.display = 'none'; }
+
+function beginDragPalette(e, type) {
+  e.preventDefault();
+  const { x, y } = pt(e);
+  showGhost(type, x, y);
+  drag = { source: 'palette', type, item: null, moved: false };
+}
+
+function beginDragPlaced(e, item) {
+  e.preventDefault(); e.stopPropagation();
+  const { x, y } = pt(e);
+  showGhost(item.type, x, y);
+  item.el.classList.add('ghost-source');
+  drag = { source: 'placed', type: item.type, item, moved: false };
+}
+
+function onMove(e) {
+  if (!drag) return;
+  e.preventDefault();
+  const { x, y } = pt(e);
+  const g = document.getElementById('drag-ghost');
+  g.style.left = x + 'px'; g.style.top = y + 'px';
+  drag.moved = true;
+
+  const tz = document.getElementById('trash-zone');
+  const tr  = tz.getBoundingClientRect();
+  tz.classList.toggle('over', x >= tr.left && x <= tr.right && y >= tr.top && y <= tr.bottom);
+}
+
+async function onEnd(e) {
+  if (!drag) return;
+  const { x, y } = pt(e);
+  hideGhost();
+  document.getElementById('trash-zone').classList.remove('over');
+  if (drag.item) drag.item.el.classList.remove('ghost-source');
+
+  if (!drag.moved) { drag = null; return; }
+
+  // Trash?
+  const tz = document.getElementById('trash-zone');
+  const tr  = tz.getBoundingClientRect();
+  if (x >= tr.left && x <= tr.right && y >= tr.top && y <= tr.bottom) {
+    if (drag.source === 'placed' && drag.item) await deleteEl(drag.item);
+    drag = null; return;
+  }
+
+  // Staff canvas?
+  const wr = document.getElementById('staff-wrapper').getBoundingClientRect();
+  if (x >= wr.left && x <= wr.right && y >= wr.top && y <= wr.bottom) {
+    const xPct = (x - wr.left) / wr.width;
+    const yPct = (y - wr.top)  / wr.height;
+
+    if (drag.source === 'palette') {
+      const item = spawnEl(drag.type, xPct, yPct, null);
+      const id   = await persistEl(drag.type, xPct, yPct);
+      item.id    = id;
+    } else if (drag.source === 'placed' && drag.item) {
+      await moveEl(drag.item, xPct, yPct);
+    }
+  }
+
+  drag = null;
+}
+
+function cancelDrag() {
+  if (!drag) return;
+  hideGhost();
+  document.getElementById('trash-zone').classList.remove('over');
+  if (drag.item) drag.item.el.classList.remove('ghost-source');
+  drag = null;
+}
+
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+}
+function setStatus(msg) { document.getElementById('status').textContent = msg; }
+
+init().catch(err => {
+  console.error(err);
+  document.getElementById('loading').textContent = 'connection failed — check browser console';
+});
+</script>
+</body>
+</html>
