@@ -308,7 +308,13 @@
 const SB_URL = 'https://msobwkepsdbfshjrstsn.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1zb2J3a2Vwc2RiZnNoanJzdHNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg2NDA1MjEsImV4cCI6MjA5NDIxNjUyMX0.mtgkA0Hf91zPxGkiVSUzeoYtnOA2YMqEGjw2yD0MDCA';
 const { createClient } = window.supabase;
-const sb = createClient(SB_URL, SB_KEY);
+const sb = createClient(SB_URL, SB_KEY, {
+  auth: {
+    persistSession: false,
+    autoRefreshToken: false,
+    detectSessionInUrl: false
+  }
+});
 
 let currentStaffId = null;
 let currentSeqNum  = null;
