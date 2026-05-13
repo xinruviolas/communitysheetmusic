@@ -249,7 +249,7 @@
 
     <div class="page-header">
       <span class="page-title">Community Sheet Music</span>
-      <span class="page-meta" id="visitor-label">visitor —</span>
+      <span class="page-meta" id="visitor-label">submission #—</span>
     </div>
 
     <img id="welcome-img" src="welcome.png" alt="Welcome" draggable="false">
@@ -276,7 +276,7 @@
       </button>
     </div>
 
-    <button id="browse-btn" onclick="openGallery()">browse past staffs (<span id="complete-count">…</span>)</button>
+    <button id="browse-btn" onclick="openGallery()">browse past staffs</button>
 
     <div id="status"></div>
     <p id="hint">Drag notes onto the staff · drag to reposition · drop on trash to delete</p>
@@ -355,41 +355,55 @@ async function init() {
 // ── Counts ─────────────────────────────────────────────────────────
 async function fetchCounts() {
   document.getElementById('visitor-label').textContent =
-    'visitor ' + (currentSeqNum ?? '—');
-
-  const { count } = await sb
-    .from('staffs')
-    .select('id', { count: 'exact', head: true })
-    .eq('is_complete', true);
-  document.getElementById('complete-count').textContent = count ?? '0';
+    'submission #' + (currentSeqNum ?? '—');
 }
 
 // ── Staff ─────────────────────────────────────────────────────────
 async function loadOrCreateStaff() {
-  const { data } = await sb
-    .from('staffs').select('*')
-    .eq('is_complete', false)
-    .order('created_at', { ascending: false })
-    .limit(1);
+  const savedId = sessionStorage.getItem('csm_staff_id');
 
-  if (data && data.length > 0) {
-    currentStaffId = data[0].id;
-    currentSeqNum  = data[0].sequence_number;
-    await loadElements();
-  } else {
-    await createStaff();
+  if (savedId) {
+    const { data } = await sb
+      .from('staffs').select('*').eq('id', savedId).single();
+
+    if (data) {
+      currentStaffId = data.id;
+      currentSeqNum  = data.sequence_number;
+      await loadElements();
+      if (data.is_complete) {
+        // Previous session was submitted — start fresh
+        await createStaff();
+      }
+      return;
+    }
   }
+
+  // New visitor — create a fresh staff
+  await createStaff();
 }
 
 async function createStaff() {
   const { data } = await sb
     .from('staffs').insert({ is_complete: false }).select().single();
-  if (data) { currentStaffId = data.id; currentSeqNum = data.sequence_number; }
+  if (data) {
+    currentStaffId = data.id;
+    currentSeqNum  = data.sequence_number;
+    sessionStorage.setItem('csm_staff_id', currentStaffId);
+  }
   placedItems = [];
 }
 
 async function loadElements() {
   clearCanvasDOM();
+
+  // Wait for staff image to be fully rendered so percentage
+  // positions resolve against the correct wrapper height.
+  await new Promise(resolve => {
+    const img = document.getElementById('staff-img');
+    if (img.complete && img.naturalHeight > 0) resolve();
+    else img.addEventListener('load', resolve, { once: true });
+  });
+
   const { data } = await sb.from('elements').select('*').eq('staff_id', currentStaffId);
   if (data) data.forEach(r => spawnEl(r.type, r.x_pct, r.y_pct, r.id));
 }
@@ -447,12 +461,31 @@ function clearCanvasDOM() {
 }
 
 // ── Submit ─────────────────────────────────────────────────────────
+const RATE_LIMIT = 10;
+
+function getSubmitCount() {
+  return parseInt(localStorage.getItem('csm_submit_count') || '0', 10);
+}
+function incrementSubmitCount() {
+  localStorage.setItem('csm_submit_count', getSubmitCount() + 1);
+}
+
 async function handleSubmit() {
   if (!currentStaffId) {
     setStatus('not connected — check browser console');
     return;
   }
-  if (placedItems.length === 0 && !confirm('Your staff is empty — submit anyway?')) return;
+
+  if (placedItems.length === 0) {
+    setStatus('add at least one note before submitting.');
+    setTimeout(() => setStatus(''), 2500);
+    return;
+  }
+
+  if (getSubmitCount() >= RATE_LIMIT) {
+    setStatus('you\'ve submitted a lot today — please let others have a turn ♩');
+    return;
+  }
 
   setStatus('saving…');
   try {
@@ -462,11 +495,12 @@ async function handleSubmit() {
       .eq('id', currentStaffId);
     if (error) throw error;
 
+    incrementSubmitCount();
     clearCanvasDOM();
     await createStaff();
     await fetchCounts();
-    setStatus('submitted ♩  a new staff awaits.');
-    setTimeout(() => setStatus(''), 3500);
+    setStatus('submitted ♩  start another.');
+    setTimeout(() => setStatus(''), 3000);
   } catch (err) {
     console.error('Submit failed:', err);
     setStatus('error saving — check browser console');
@@ -509,15 +543,24 @@ function buildCard(staff, elements) {
 
   const bg = document.createElement('img');
   bg.src = 'staff.PNG'; bg.className = 'g-staff-bg'; bg.alt = '';
-  area.appendChild(bg);
 
-  elements.forEach(el => {
-    const note = document.createElement('img');
-    note.src = el.type + '.PNG'; note.className = 'g-note';
-    note.style.left = (el.x_pct * 100) + '%';
-    note.style.top  = (el.y_pct * 100) + '%';
-    area.appendChild(note);
-  });
+  function placeNotes() {
+    elements.forEach(el => {
+      const note = document.createElement('img');
+      note.src = el.type + '.PNG'; note.className = 'g-note';
+      note.style.left = (el.x_pct * 100) + '%';
+      note.style.top  = (el.y_pct * 100) + '%';
+      area.appendChild(note);
+    });
+  }
+
+  if (bg.complete && bg.naturalHeight > 0) {
+    placeNotes();
+  } else {
+    bg.addEventListener('load', placeNotes, { once: true });
+  }
+
+  area.appendChild(bg);
 
   const meta = document.createElement('div');
   meta.className = 'g-card-meta';
