@@ -131,7 +131,7 @@
     #drag-ghost {
       position: fixed; pointer-events: none; z-index: 9999;
       height: 80px; width: auto;
-      transform: translate(-50%, -50%) scale(1.08);
+      transform: translate(-50%, -50%) scale(1.06);
       display: none; opacity: 0.7;
     }
 
@@ -145,13 +145,13 @@
 
     .pal-item {
       cursor: grab; touch-action: none; user-select: none;
-      flex: 1;
+      width: calc(100% / 9);
       display: flex; align-items: center; justify-content: center;
-      padding: 6px 2px;
+      padding: 4px 0;
       transition: transform 0.12s, opacity 0.12s;
     }
     .pal-item:hover { transform: scale(1.1); opacity: 0.7; }
-    .pal-item img   { height: 80px; width: auto; pointer-events: none; display: block; }
+    .pal-item img   { height: 60px; width: auto; pointer-events: none; display: block; }
 
     /* ── Trash + Submit row ───────────────────────────────── */
     #bottom-row {
@@ -249,16 +249,19 @@
 
     <div class="page-header">
       <span class="page-title">Community Sheet Music</span>
-      <span class="page-meta" id="visitor-label">submission #—</span>
+      <span class="page-meta" id="visitor-label">visitor #—</span>
     </div>
 
     <img id="welcome-img" src="welcome.png" alt="Welcome" draggable="false">
 
     <div id="staff-wrapper">
-      <img id="staff-img" src="staff.PNG" alt="Music staff" draggable="false">
+      <img id="staff-img" src="newstaff.PNG" alt="Music staff" draggable="false">
     </div>
 
     <div id="palette">
+      <div class="pal-item" data-type="treble"><img src="treble.PNG" alt="Treble clef" draggable="false"></div>
+      <div class="pal-item" data-type="alto"><img src="alto.PNG" alt="Alto clef" draggable="false"></div>
+      <div class="pal-item" data-type="bass"><img src="bass.PNG" alt="Bass clef" draggable="false"></div>
       <div class="pal-item" data-type="quarter"><img src="quarter.PNG" alt="Quarter note" draggable="false"></div>
       <div class="pal-item" data-type="half"><img src="half.PNG" alt="Half note" draggable="false"></div>
       <div class="pal-item" data-type="eighth"><img src="eighth.PNG" alt="Eighth note" draggable="false"></div>
@@ -355,7 +358,7 @@ async function init() {
 // ── Counts ─────────────────────────────────────────────────────────
 async function fetchCounts() {
   document.getElementById('visitor-label').textContent =
-    'submission #' + (currentSeqNum ?? '—');
+    'visitor #' + (currentSeqNum ?? '—');
 }
 
 // ── Staff ─────────────────────────────────────────────────────────
@@ -371,7 +374,6 @@ async function loadOrCreateStaff() {
       currentSeqNum  = data.sequence_number;
       await loadElements();
       if (data.is_complete) {
-        // Previous session was submitted — start fresh
         await createStaff();
       }
       return;
@@ -541,8 +543,14 @@ function buildCard(staff, elements) {
   const area = document.createElement('div');
   area.className = 'g-card-staff';
 
+  const submittedOn = new Date(staff.created_at);
+  const isMay13 = submittedOn.getUTCFullYear() === 2026 &&
+                  submittedOn.getUTCMonth() === 4 &&   // 0-indexed, 4 = May
+                  submittedOn.getUTCDate() === 13;
+  const staffBg = isMay13 ? 'staff.PNG' : 'newstaff.PNG';
+
   const bg = document.createElement('img');
-  bg.src = 'staff.PNG'; bg.className = 'g-staff-bg'; bg.alt = '';
+  bg.src = staffBg; bg.className = 'g-staff-bg'; bg.alt = '';
 
   function placeNotes() {
     elements.forEach(el => {
